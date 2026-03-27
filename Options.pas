@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils,
-  IniFiles,
+  System.IniFiles,
   System.RegularExpressions;
 
 const

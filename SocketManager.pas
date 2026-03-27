@@ -15,7 +15,7 @@ type
     isUdp: boolean;
     hasSent: boolean;
     fakeHttpProxyFlag: boolean;
-    createdAt: integer;
+    createdAt: Int64;
   end;
 
   TSocketManager = class
@@ -73,7 +73,7 @@ end;
 procedure TSocketManager.CollectGarbage;
 var
   i: integer;
-  tick: integer;
+  tick: Int64;
 begin
   tick := GetTickCount64 - 30000;
   for i := High(items) downto 0 do

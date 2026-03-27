@@ -59,6 +59,10 @@ var
   sockManager: TSocketManager;
   droverOptions: TDroverOptions;
   proxyValue: TProxyValue;
+  initComplete: boolean;
+  threadId: DWORD;
+  hInitThread: THandle;
+  commandLineCache: string;
 
 procedure MyGetFileVersionInfoA;
 asm
@@ -149,6 +153,7 @@ function MyGetEnvironmentVariableW(lpName: LPCWSTR; lpBuffer: LPWSTR; nSize: DWO
 var
   s: string;
   newValue: string;
+  requiredSize: DWORD;
 begin
   if proxyValue.isSpecified then
   begin
@@ -157,6 +162,9 @@ begin
       (Pos('HTTPS_PROXY', s) > 0) then
     begin
       newValue := proxyValue.FormatToHttpEnv;
+      requiredSize := DWORD(Length(newValue)) + 1;
+      if (lpBuffer = nil) or (nSize < requiredSize) then
+        exit(requiredSize);
       StringToWideChar(newValue, lpBuffer, nSize);
       result := Length(newValue);
       exit;
@@ -243,29 +251,29 @@ begin
 end;
 
 function MyGetCommandLineW: LPWSTR; stdcall;
-var
-  s: string;
 begin
-  s := RealGetCommandLineW;
+  commandLineCache := RealGetCommandLineW;
   if proxyValue.isSpecified then
   begin
     if IsDiscordExecutable(ExtractFileName(ParamStr(0))) then
-      s := s + ' --proxy-server=' + proxyValue.FormatToChromeProxy;
+      commandLineCache := commandLineCache + ' --proxy-server=' + proxyValue.FormatToChromeProxy;
   end;
-  result := PChar(s);
+  result := PChar(commandLineCache);
 end;
 
 function MySocket(af, type_, protocol: integer): TSocket; stdcall;
 begin
   result := RealSocket(af, type_, protocol);
-  sockManager.Add(result, type_, protocol);
+  if initComplete then
+    sockManager.Add(result, type_, protocol);
 end;
 
 function MyWSASocket(af, type_, protocol: integer; lpProtocolInfo: LPWSAPROTOCOL_INFO; g: GROUP; dwFlags: DWORD)
   : TSocket; stdcall;
 begin
   result := RealWSASocket(af, type_, protocol, lpProtocolInfo, g, dwFlags);
-  sockManager.Add(result, type_, protocol);
+  if initComplete then
+    sockManager.Add(result, type_, protocol);
 end;
 
 function AddHttpProxyAuthorizationHeader(socketManagerItem: TSocketManagerItem; lpBuffers: LPWSABUF;
@@ -325,7 +333,7 @@ function MyWSASend(sock: TSocket; lpBuffers: LPWSABUF; dwBufferCount: DWORD; lpN
 var
   sockManagerItem: TSocketManagerItem;
 begin
-  if sockManager.IsFirstSend(sock, sockManagerItem) then
+  if initComplete and sockManager.IsFirstSend(sock, sockManagerItem) then
   begin
     AddHttpProxyAuthorizationHeader(sockManagerItem, lpBuffers, dwBufferCount, lpNumberOfBytesSent, dwFlags,
       lpOverlapped, lpCompletionRoutine);
@@ -342,7 +350,7 @@ var
   payload: byte;
   sockManagerItem: TSocketManagerItem;
 begin
-  if sockManager.IsFirstSend(sock, sockManagerItem) then
+  if initComplete and sockManager.IsFirstSend(sock, sockManagerItem) then
   begin
     if sockManagerItem.isUdp and (lpBuffers.len = 74) then
     begin
@@ -429,7 +437,7 @@ function MySend(sock: TSocket; const buf; len, flags: integer): integer; stdcall
 var
   sockManagerItem: TSocketManagerItem;
 begin
-  if sockManager.IsFirstSend(sock, sockManagerItem) then
+  if initComplete and sockManager.IsFirstSend(sock, sockManagerItem) then
   begin
     if ConvertHttpToSocks5(sockManagerItem, buf, len, flags) then
       exit(len);
@@ -445,11 +453,10 @@ var
 begin
   result := RealRecv(sock, buf, len, flags);
 
-  if (result > 0) and sockManager.ResetFakeHttpProxyFlag(sock) then
+  if initComplete and (result > 0) and sockManager.ResetFakeHttpProxyFlag(sock) then
   begin
     if result >= 10 then
     begin
-      // Potential issue: real server data may mix with the SOCKS5 response
       SetLength(s, result);
       Move(buf, s[1], result);
       if Copy(s, 1, 3) = #$05#$00#$00 then
@@ -532,6 +539,44 @@ begin
   end;
 end;
 
+function DeferredInitThread(param: pointer): DWORD; stdcall;
+begin
+  result := 0;
+  try
+    sockManager := TSocketManager.Create;
+
+    droverOptions := LoadOptions(currentProcessDir + OPTIONS_FILENAME);
+
+    if droverOptions.useNekoboxProxy and IsNekoBoxExists then
+      proxyValue.ParseFromString(droverOptions.nekoboxProxy)
+    else
+      proxyValue.ParseFromString(droverOptions.proxy);
+
+    RealGetEnvironmentVariableW := InterceptCreate(@GetEnvironmentVariableW, @MyGetEnvironmentVariableW, nil);
+    RealCreateProcessW := InterceptCreate(@CreateProcessW, @MyCreateProcessW, nil);
+    RealGetCommandLineW := InterceptCreate(@GetCommandLineW, @MyGetCommandLineW, nil);
+
+    RealSocket := InterceptCreate(@socket, @MySocket, nil);
+    RealWSASocket := InterceptCreate(@WSASocket, @MyWSASocket, nil);
+    RealWSASend := InterceptCreate(@WSASend, @MyWSASend, nil);
+    RealWSASendTo := InterceptCreate(@WSASendTo, @MyWSASendTo, nil);
+    RealSend := InterceptCreate(@send, @MySend, nil);
+    RealRecv := InterceptCreate(@recv, @MyRecv, nil);
+
+    MemoryBarrier;
+    initComplete := true;
+  except
+    on E: Exception do
+    begin
+      try
+        TFile.WriteAllText(currentProcessDir + 'drover-error.log',
+          DateTimeToStr(Now) + ': ' + E.ClassName + ': ' + E.Message);
+      except
+      end;
+    end;
+  end;
+end;
+
 exports
   MyGetFileVersionInfoA index 1 name 'GetFileVersionInfoA',
   MyGetFileVersionInfoByHandle index 2 name 'GetFileVersionInfoByHandle',
@@ -552,27 +597,13 @@ exports
   MyVerQueryValueW index 17 name 'VerQueryValueW';
 
 begin
+  initComplete := false;
   currentProcessDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
-  sockManager := TSocketManager.Create;
-
-  droverOptions := LoadOptions(currentProcessDir + OPTIONS_FILENAME);
-
-  if droverOptions.useNekoboxProxy and IsNekoBoxExists then
-    proxyValue.ParseFromString(droverOptions.nekoboxProxy)
-  else
-    proxyValue.ParseFromString(droverOptions.proxy);
 
   LoadOriginalVersionDll;
 
-  RealGetEnvironmentVariableW := InterceptCreate(@GetEnvironmentVariableW, @MyGetEnvironmentVariableW, nil);
-  RealCreateProcessW := InterceptCreate(@CreateProcessW, @MyCreateProcessW, nil);
-  RealGetCommandLineW := InterceptCreate(@GetCommandLineW, @MyGetCommandLineW, nil);
-
-  RealSocket := InterceptCreate(@socket, @MySocket, nil);
-  RealWSASocket := InterceptCreate(@WSASocket, @MyWSASocket, nil);
-  RealWSASend := InterceptCreate(@WSASend, @MyWSASend, nil);
-  RealWSASendTo := InterceptCreate(@WSASendTo, @MyWSASendTo, nil);
-  RealSend := InterceptCreate(@send, @MySend, nil);
-  RealRecv := InterceptCreate(@recv, @MyRecv, nil);
-
+  DisableThreadLibraryCalls(HInstance);
+  hInitThread := CreateThread(nil, 0, @DeferredInitThread, nil, 0, threadId);
+  if hInitThread <> 0 then
+    CloseHandle(hInitThread);
 end.

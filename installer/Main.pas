@@ -28,11 +28,21 @@ type
     lLogin: TLabel;
     lPassword: TLabel;
     rbDirect: TRadioButton;
+    TrayIcon: TTrayIcon;
+    TrayMenu: TPopupMenu;
+    miRestore: TMenuItem;
+    miHide: TMenuItem;
+    miExit: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormShow(Sender: TObject);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
     procedure btnInstallClick(Sender: TObject);
     procedure btnUninstallClick(Sender: TObject);
     procedure miAboutClick(Sender: TObject);
+    procedure miRestoreClick(Sender: TObject);
+    procedure miHideClick(Sender: TObject);
+    procedure miExitClick(Sender: TObject);
+    procedure TrayIconDblClick(Sender: TObject);
     procedure cbAuthClick(Sender: TObject);
     procedure rbDirectClick(Sender: TObject);
     procedure rbHttpClick(Sender: TObject);
@@ -40,7 +50,9 @@ type
   private
     currentProcessDir: string;
     messageCaption: PChar;
+    FExitRequested: Boolean;
 
+    procedure SetWindowVisible(const AVisible: Boolean);
     function FindMostSuitableOptionsPath: string;
     procedure FindDiscordBaseDirs(list: TStringList);
     procedure FindDiscordDirs(list: TStringList);
@@ -104,11 +116,64 @@ end;
 procedure TfrmMain.FormShow(Sender: TObject);
 begin
   self.ActiveControl := btnInstall;
+  TrayIcon.Visible := True;
+end;
+
+procedure TfrmMain.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+  if FExitRequested then
+  begin
+    Action := caFree;
+    exit;
+  end;
+
+  Action := caHide;
+  SetWindowVisible(False);
+end;
+
+procedure TfrmMain.SetWindowVisible(const AVisible: Boolean);
+begin
+  if AVisible then
+  begin
+    Show;
+    WindowState := wsNormal;
+    TrayIcon.Visible := True;
+  end
+  else
+  begin
+    Hide;
+    TrayIcon.Visible := True;
+  end;
 end;
 
 procedure TfrmMain.miAboutClick(Sender: TObject);
 begin
   ShellExecute(0, 'open', 'https://github.com/hdrover/discord-drover', nil, nil, SW_SHOWNORMAL);
+end;
+
+procedure TfrmMain.miRestoreClick(Sender: TObject);
+begin
+  SetWindowVisible(True);
+  Application.BringToFront;
+end;
+
+procedure TfrmMain.miHideClick(Sender: TObject);
+begin
+  SetWindowVisible(False);
+end;
+
+procedure TfrmMain.miExitClick(Sender: TObject);
+begin
+  FExitRequested := True;
+  Application.Terminate;
+end;
+
+procedure TfrmMain.TrayIconDblClick(Sender: TObject);
+begin
+  if Visible then
+    SetWindowVisible(False)
+  else
+    SetWindowVisible(True);
 end;
 
 procedure TfrmMain.btnInstallClick(Sender: TObject);

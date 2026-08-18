@@ -209,4 +209,27 @@ object frmMain: TfrmMain
       OnClick = miAboutClick
     end
   end
+  object TrayIcon: TTrayIcon
+    PopupMenu = TrayMenu
+    Visible = True
+    OnDblClick = TrayIconDblClick
+    Left = 432
+    Top = 212
+  end
+  object TrayMenu: TPopupMenu
+    Left = 432
+    Top = 256
+    object miRestore: TMenuItem
+      Caption = 'Restore'
+      OnClick = miRestoreClick
+    end
+    object miHide: TMenuItem
+      Caption = 'Hide'
+      OnClick = miHideClick
+    end
+    object miExit: TMenuItem
+      Caption = 'Exit'
+      OnClick = miExitClick
+    end
+  end
 end

@@ -15,6 +15,11 @@ const
 type
   TDroverOptions = record
     proxy: string;
+    torExecutable: string;
+    autoStartTor: boolean;
+    tempTorMode: boolean;
+    torWarmupSeconds: integer;
+    notifyOnDirectMode: boolean;
   end;
 
   TProxyValue = record
@@ -33,6 +38,7 @@ type
     function FormatToChromeProxy: string;
   end;
 
+function CreateDefaultOptions: TDroverOptions; forward;
 function LoadOptions(filename: string): TDroverOptions;
 function SaveOptions(filename: string; opt: TDroverOptions): boolean;
 function GetExtraFilenames(const dir: string; forUninstall: boolean): TArray<string>;
@@ -97,19 +103,29 @@ function LoadOptions(filename: string): TDroverOptions;
 var
   f: TIniFile;
 begin
-  result := Default (TDroverOptions);
+  // ✅ Sempre começar com valores padrão corretos
+  result := CreateDefaultOptions;
 
   try
+    if not FileExists(filename) then
+      exit;  // Retorna com defaults corretos
+
     f := TIniFile.Create(filename);
     try
       with f do
       begin
-        result.proxy := ReadString('drover', 'proxy', '');
+        result.proxy := ReadString('drover', 'proxy', result.proxy);
+        result.torExecutable := ReadString('drover', 'tor', result.torExecutable);
+        result.autoStartTor := ReadBool('drover', 'autostart_tor', result.autoStartTor);
+        result.tempTorMode := ReadBool('drover', 'temp_tor_mode', result.tempTorMode);
+        result.torWarmupSeconds := ReadInteger('drover', 'tor_warmup_seconds', result.torWarmupSeconds);
+        result.notifyOnDirectMode := ReadBool('drover', 'notify_on_direct_mode', result.notifyOnDirectMode);
       end;
     finally
       f.Free;
     end;
   except
+    // Se houver erro lendo o arquivo, retorna com defaults
   end;
 end;
 
@@ -118,20 +134,54 @@ begin
   result := [PACKET_FILENAME];
 end;
 
+function CreateDefaultOptions: TDroverOptions;
+begin
+  // Handler de valores padrão: Tor permanente, sem desconectar
+  result.proxy := 'socks5://127.0.0.1:9050';
+  result.torExecutable := '';  // Será encontrado em drover-tor\tor.exe
+  result.autoStartTor := true;  // ✅ Sempre inicia Tor
+  result.tempTorMode := false;  // ✅ Tor PERMANENTE (não desconecta)
+  result.torWarmupSeconds := 20;
+  result.notifyOnDirectMode := false;
+end;
+
 function SaveOptions(filename: string; opt: TDroverOptions): boolean;
 var
-  f: TextFile;
+  f: TIniFile;
+  dir: string;
 begin
+  result := false;
   try
-    AssignFile(f, filename);
-    try
-      Rewrite(f);
-      WriteLn(f, '[drover]');
-      WriteLn(f, Trim('proxy = ' + opt.proxy));
-    finally
-      CloseFile(f);
+    // ✅ Garantir que o diretório existe
+    dir := ExtractFileDir(filename);
+    if (dir <> '') and not DirectoryExists(dir) then
+    begin
+      try
+        ForceDirectories(dir);
+      except
+        exit(false);
+      end;
     end;
-    result := true;
+
+    // ✅ Usar TIniFile que é mais robusto que TextFile
+    f := TIniFile.Create(filename);
+    try
+      with f do
+      begin
+        WriteString('drover', 'proxy', opt.proxy);
+        
+        if Trim(opt.torExecutable) <> '' then
+          WriteString('drover', 'tor', opt.torExecutable);
+        
+        WriteBool('drover', 'autostart_tor', opt.autoStartTor);
+        WriteBool('drover', 'temp_tor_mode', opt.tempTorMode);  // ✅ SEMPRE salvar
+        WriteInteger('drover', 'tor_warmup_seconds', opt.torWarmupSeconds);
+        WriteBool('drover', 'notify_on_direct_mode', opt.notifyOnDirectMode);
+      end;
+      result := true;
+    finally
+      f.Free;
+    end;
   except
     result := false;
   end;

@@ -1,50 +1,63 @@
-# Discord Drover (Proxy Settings for Discord)
+# Discord Drover (Tor Edition)
 
-Discord Drover is a program that forces the Discord application for Windows to use a specified proxy server (HTTP or SOCKS5) for TCP connections (chat, updates). This may be necessary because the original Discord application lacks proxy settings, and the global system proxy is also not used.
+Discord Drover forces Discord on Windows to route its traffic through Tor (SOCKS5 local proxy), bypassing network blocks on chat, updates, and voice channels without requiring a system-wide VPN.
 
-Additionally, the program slightly modifies Discord's outgoing UDP traffic, which helps bypass some local restrictions on voice chats.
+## Features & How They Work
 
-The program works locally at the specific process level (without drivers) and does not affect the operating system globally. This approach serves as an alternative to using a global VPN (such as TUN interfaces and others).
+- **Automated Tor Setup (`drover-tor\`)**:
+  - *What it does*: The installer bundles `tor.exe` and copies it directly into your Discord version directory (`app-x.x.x\drover-tor\`).
+  - *Why it matters*: You don't need to manually install or configure Tor Browser. Even if you run the installer without extracting the zip properly, Discord keeps its own local Tor instance.
+
+- **Temporary Tor Mode (`temp_tor_mode`)**:
+  - *What it does*: Routes all TCP/handshake traffic through Tor only during Discord's initial startup and login phase. After a configurable warmup period (`tor_warmup_seconds`), new connections switch to a direct connection and the Tor background process is automatically shut down.
+  - *Why it matters*: Ideal when only Discord's login/API endpoints are blocked in your region, but direct media/gateway streams work once connected. This saves bandwidth, improves latency for gaming/streaming, and frees up system resources.
+
+- **Background Process Management (`autostart_tor`)**:
+  - *What it does*: Launches Tor completely hidden (`SW_HIDE`, `CREATE_NO_WINDOW`) when Discord starts and handles clean shutdown when no longer needed.
+  - *Why it matters*: No extra command prompt or terminal windows popping up on your desktop while launching Discord.
+
+- **UDP Voice Traffic Manipulation**:
+  - *What it does*: Modifies outgoing UDP voice packets at the socket level to bypass Deep Packet Inspection (DPI) blocks on voice channels.
+  - *Why it matters*: Resolves "Connecting / No Route / RTC Connecting" voice errors common in regions with strict VoIP restrictions.
+
+- **Process-Level Isolation via `version.dll`**:
+  - *What it does*: Injects proxy behavior directly into the Discord process by loading alongside `Discord.exe`.
+  - *Why it matters*: No admin services, kernel drivers, or system-wide proxy/VPN changes. Other applications and games on your PC continue using your normal connection untouched.
 
 ## Installation
 
-The latest version of the program can be downloaded from the [latest release page](https://github.com/hdrover/discord-drover/releases/latest).
+Download the latest build from the [releases page](https://github.com/bonqf/discord-drover-tor/releases/latest).
 
-### Automatic Installation
+### Using the Installer (`drover.exe`)
 
-For an easier setup, use the included installer `drover.exe`. Run the program and fill in the proxy settings, then click **Install** to automatically place the necessary files in the correct folder.
+1. Close Discord completely.
+2. Run `drover.exe`.
+3. Choose your options:
+   - **Instalar Tor automaticamente** *(Enabled by default)*: Copies the bundled Tor into Discord's internal folder. Uncheck only if you want to point to an existing Tor installation manually.
+   - **Usar Tor apenas na inicialização (modo temporário)**: Enables Temporary Tor Mode. Set the warmup period (default: 20 seconds) for how long Tor should handle traffic before switching to direct mode.
+4. Click **Install**.
 
-In regions like the UAE, where Discord works but voice chat is blocked, you can use **Direct mode** to bypass voice chat restrictions without a proxy.
+To remove Drover, run `drover.exe` and click **Uninstall**.
 
-To uninstall the program and remove all associated files, run `drover.exe` again and click **Uninstall**.
+### Configuration (`drover.ini`)
 
-### Manual Installation
-
-If you prefer manual installation, copy the `version.dll` and `drover.ini` files into the folder containing the `Discord.exe` file (not `Update.exe`). The proxy is specified in the `drover.ini` file under the `proxy` parameter.
-
-### Example `drover.ini` Configuration:
+Settings are stored in `drover.ini` inside your active Discord `app-*` folder:
 
 ```ini
 [drover]
-; Proxy can use http or socks5 protocols
-proxy = http://127.0.0.1:1080
+proxy = socks5://127.0.0.1:9050
+tor = C:\Users\<User>\AppData\Local\Discord\app-1.0.9177\drover-tor\tor.exe
+autostart_tor = true
+temp_tor_mode = false
+tor_warmup_seconds = 20
 ```
 
-- **proxy**: Defines the main proxy server to use for Discord (HTTP or SOCKS5). If left empty, no proxy will be used, but UDP manipulation will still occur to bypass voice chat restrictions (same as Direct mode in the installer).
-
-## Features
-
-- Forces Discord to use a specified proxy for TCP connections.
-- Slight interference with UDP traffic for bypassing voice chat restrictions. In Direct mode, no proxy is used, only UDP manipulation is performed.
-- Supports HTTP proxies with authentication (login and password).
-- No drivers or system-level modifications are required.
-- Works locally at the process level, offering an alternative to global VPN solutions.
-- Supports Discord Canary and PTB versions in addition to the main version.
+- **`proxy`**: Local SOCKS5 proxy address (default: `socks5://127.0.0.1:9050`).
+- **`tor`**: Path to the `tor.exe` binary.
+- **`autostart_tor`**: Starts Tor automatically in the background when Discord opens.
+- **`temp_tor_mode`**: When `true`, transitions to a direct connection after the warmup period.
+- **`tor_warmup_seconds`**: Duration (in seconds) to stay on Tor before transitioning to direct connection.
 
 ## Optional `drover-packet.bin`
 
-If a `drover-packet.bin` file is present, its contents are sent at the start of each new outgoing UDP connection, before the built-in UDP manipulation. This can help bypass voice chat restrictions on networks where the built-in manipulation alone is not enough.
-
-The file is re-read before every new connection, so its contents can be edited or replaced while Discord is running. There is no need to restart Discord to try a different packet; starting a new voice connection is enough.
-
-The file is optional. The built-in UDP manipulation is always performed. `drover-packet.bin` only adds an extra payload before it.
+If `drover-packet.bin` is placed in the Discord folder, its contents are sent at the start of each outgoing UDP voice connection before normal packet manipulation. This adds an extra layer of packet fragmentation/padding for networks with aggressive DPI filters.

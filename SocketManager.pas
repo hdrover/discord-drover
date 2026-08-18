@@ -6,9 +6,13 @@ uses
   System.SysUtils,
   Winapi.Windows,
   WinSock,
-  SyncObjs;
+  WinSock2,
+  SyncObjs,
+  System.Generics.Collections;
 
 type
+  TDroverMode = (dmTor, dmDirect);
+
   TSocketManagerItem = record
     sock: TSocket;
     isTcp: boolean;
@@ -16,6 +20,7 @@ type
     hasSent: boolean;
     fakeHttpProxyFlag: boolean;
     createdAt: int64;
+    mode: TDroverMode;
   end;
 
   TSocketManager = class
@@ -27,10 +32,16 @@ type
     procedure DeleteByIndex(index: integer);
     procedure CollectGarbage;
   public
-    procedure Add(sock: TSocket; sockType, sockProtocol: integer);
+    procedure Add(sock: TSocket; sockType, sockProtocol: integer; initialMode: TDroverMode);
     function IsFirstSend(sock: TSocket; var item: TSocketManagerItem): boolean;
     procedure SetFakeHttpProxyFlag(sock: TSocket);
     function ResetFakeHttpProxyFlag(sock: TSocket): boolean;
+    procedure SetMode(sock: TSocket; mode: TDroverMode);
+    function GetItem(sock: TSocket; var item: TSocketManagerItem): boolean;
+    function CountActiveTorSockets: integer;
+    function GetAllTorSockets: TArray<TSocket>;
+    procedure Remove(sock: TSocket);
+    procedure RemoveBySock(sock: TSocket);
 
     constructor Create;
     destructor Destroy; override;
@@ -70,6 +81,20 @@ begin
   SetLength(items, lastIndex);
 end;
 
+procedure TSocketManager.Remove(sock: TSocket);
+var
+  i: integer;
+begin
+  criticalSection.Enter;
+  try
+    i := FindIndexBySock(sock);
+    if i >= 0 then
+      DeleteByIndex(i);
+  finally
+    criticalSection.Leave;
+  end;
+end;
+
 procedure TSocketManager.CollectGarbage;
 var
   i: integer;
@@ -85,7 +110,7 @@ begin
   end;
 end;
 
-procedure TSocketManager.Add(sock: TSocket; sockType, sockProtocol: integer);
+procedure TSocketManager.Add(sock: TSocket; sockType, sockProtocol: integer; initialMode: TDroverMode);
 var
   item: TSocketManagerItem;
   i: integer;
@@ -96,6 +121,7 @@ begin
   item.hasSent := false;
   item.fakeHttpProxyFlag := false;
   item.createdAt := GetTickCount64;
+  item.mode := initialMode;   // em vez de dmTor fixo
 
   criticalSection.Enter;
   try
@@ -161,6 +187,80 @@ begin
   finally
     criticalSection.Leave;
   end;
+end;
+
+procedure TSocketManager.SetMode(sock: TSocket; mode: TDroverMode);
+var
+  i: integer;
+begin
+  criticalSection.Enter;
+  try
+    i := FindIndexBySock(sock);
+    if i >= 0 then
+      items[i].mode := mode;
+  finally
+    criticalSection.Leave;
+  end;
+end;
+
+function TSocketManager.GetItem(sock: TSocket; var item: TSocketManagerItem): boolean;
+var
+  i: integer;
+begin
+  criticalSection.Enter;
+  try
+    i := FindIndexBySock(sock);
+    if i >= 0 then
+    begin
+      item := items[i];
+      result := true;
+    end
+    else
+      result := false;
+  finally
+    criticalSection.Leave;
+  end;
+end;
+
+function TSocketManager.CountActiveTorSockets: integer;
+var
+  i: integer;
+begin
+  criticalSection.Enter;
+  try
+    result := 0;
+    for i := 0 to High(items) do
+      if items[i].mode = dmTor then
+        Inc(result);
+  finally
+    criticalSection.Leave;
+  end;
+end;
+
+function TSocketManager.GetAllTorSockets: TArray<TSocket>;
+var
+  i: integer;
+  list: TList<TSocket>;
+begin
+  list := TList<TSocket>.Create;
+  try
+    criticalSection.Enter;
+    try
+      for i := 0 to High(items) do
+        if items[i].mode = dmTor then
+          list.Add(items[i].sock);
+    finally
+      criticalSection.Leave;
+    end;
+    result := list.ToArray;
+  finally
+    list.Free;
+  end;
+end;
+
+procedure TSocketManager.RemoveBySock(sock: TSocket);
+begin
+  Remove(sock);
 end;
 
 end.
